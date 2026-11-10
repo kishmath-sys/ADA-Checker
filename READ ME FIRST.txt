@@ -1,0 +1,72 @@
+ADA CHECKER
+Checks Word, PDF, web page, PowerPoint, Excel and Brightspace course export files against
+WCAG 2.1 AA (the ADA Title II standard) and WCAG 2.2 AA. It lists what to change and what
+to check by hand. It only reads your files and never changes them.
+
+
+INSTALL (one time, about 5 minutes)
+
+1. Unzip this folder somewhere it can stay, for example Documents\ADA Checker.
+   Do not run it from inside the zip.
+2. Double click Setup.bat.
+   If Windows shows "Windows protected your PC", click More info, then Run anyway.
+   That warning appears because the setup script is not signed by a company.
+3. Setup installs Python if needed, installs the checking libraries, and creates shortcuts.
+   ADA Checker opens when it finishes.
+
+
+EVERYDAY USE
+
+- Open ADA Checker from the desktop or Start menu.
+- Check a file: pick one or more files.
+- Check a folder: checks every supported file in the folder and its subfolders, then saves
+  a summary spreadsheet and one report per file in Documents\ADA Checker Reports.
+  Files that have not changed since the last check are skipped automatically.
+- From File Explorer: right click a file or folder, Send to, ADA Checker.
+- You can also drag files onto the window. Dragged files are checked from a copy, so use
+  Check a file when you want Rescan and History to follow the original.
+
+Each result has three lists:
+  Fix in the file        found automatically, with where it is and how to fix it
+  Check manually         needs your judgment; tick Reviewed when done
+  After you export       for Word files, a short checklist for the PDF you make from it
+"Accept as is" removes an item from the list and records your reason.
+
+The checkbox "Show only what WCAG 2.1 AA requires" hides WCAG 2.2 and best practice items.
+
+
+HISTORY AND RECORDS
+
+The History tab shows how many files are ready now, and this month compared to last month.
+"Export compliance record" saves an Excel file listing every file, its status and date,
+items you reviewed, and items you accepted as is with your reasons.
+
+
+KEEPING IT UP TO DATE
+
+Run Update.bat about once a month. It updates the axe-core web rules and the
+checking libraries.
+
+
+PRIVACY
+
+Everything runs on your computer. The internet is used only to check that web links work
+(you can turn this off in Settings) and by Update.bat.
+
+
+WHAT IT CANNOT DO
+
+No automated tool can confirm everything. A person still needs to judge whether alt text is
+accurate, whether math reads correctly in a PDF, whether reading order makes sense, and
+whether videos show important things that are not spoken. Those items are listed under
+Check manually so nothing is missed.
+
+
+UNINSTALL
+
+Double click Uninstall.bat, then delete this folder.
+
+
+IF SOMETHING GOES WRONG
+
+Details of any error are saved in %LOCALAPPDATA%\ADA Checker\log.txt

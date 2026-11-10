@@ -1,0 +1,5 @@
+.venv/
+__pycache__/
+*.pyc
+adachecker/vendor/*.previous
+adachecker/vendor/*.download

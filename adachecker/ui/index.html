@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ADA Checker</title>
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<a class="sr" href="#main">Skip to content</a>
+<div class="top">
+  <div class="brand"><h1>ADA Checker</h1><span>WCAG 2.1 AA and 2.2 AA</span></div>
+  <nav role="tablist" aria-label="Sections">
+    <button role="tab" id="tab-check" aria-controls="view-check" aria-selected="true">Check files</button>
+    <button role="tab" id="tab-results" aria-controls="view-results" aria-selected="false">Results</button>
+    <button role="tab" id="tab-history" aria-controls="view-history" aria-selected="false">History</button>
+    <button role="tab" id="tab-settings" aria-controls="view-settings" aria-selected="false">Settings</button>
+  </nav>
+</div>
+
+<main id="main">
+  <!-- ======================================================= check -->
+  <section class="view" id="view-check" role="tabpanel" aria-labelledby="tab-check">
+    <div class="check-grid">
+      <div>
+        <div class="drop" id="drop">
+          <h2>Drop a file or folder here</h2>
+          <p class="lead">You get a list of what to change and what to check by hand. Your files are only read, never changed.</p>
+          <div class="row">
+            <button class="btn primary big" id="pick-file">Check a file</button>
+            <button class="btn big" id="pick-folder">Check a folder</button>
+          </div>
+          <div class="opts row">
+            <label class="chk"><input type="checkbox" id="subfolders" checked> Include subfolders</label>
+            <label class="chk"><input type="checkbox" id="force"> Recheck files that have not changed</label>
+          </div>
+          <form class="pathbox" id="pathbox" hidden>
+            <label class="sr" for="pathinput">File or folder path</label>
+            <input type="text" id="pathinput" placeholder="Paste a file or folder path, for example C:\Users\Matt\Documents\Algebra">
+            <button class="btn" type="submit">Check</button>
+          </form>
+        </div>
+
+        <div class="progress" id="progress" hidden aria-live="polite">
+          <div class="row" style="justify-content:space-between">
+            <strong id="prog-title">Checking…</strong>
+            <button class="btn" id="cancel">Stop</button>
+          </div>
+          <div class="bar" role="progressbar" aria-labelledby="prog-title" aria-valuemin="0" aria-valuemax="100" id="prog-bar"><i></i></div>
+          <p class="muted small" id="prog-current"></p>
+          <ul class="log" id="prog-log"></ul>
+        </div>
+
+        <div class="done-card" id="done" hidden aria-live="polite"></div>
+      </div>
+
+      <aside class="side" aria-label="What gets checked">
+        <h3>What it reads</h3>
+        <dl class="formats">
+          <dt>Word</dt><dd>.docx, your main source. Gives fixes plus an after-export checklist.</dd>
+          <dt>PDF</dt><dd>Tags, headings, tables, fonts, scanned pages</dd>
+          <dt>Web pages</dt><dd>.html, checked in Edge in light and dark mode</dd>
+          <dt>PowerPoint</dt><dd>.pptx</dd>
+          <dt>Excel</dt><dd>.xlsx</dd>
+          <dt>Course export</dt><dd>A Brightspace .zip, every file inside</dd>
+        </dl>
+        <h3>How a result reads</h3>
+        <ul>
+          <li><span class="st st-needs-work">Changes needed</span> something to fix in the file</li>
+          <li><span class="st st-needs-review">Check manually</span> needs your judgment</li>
+          <li><span class="st st-pass">Ready</span> nothing left open</li>
+        </ul>
+        <p class="muted small">Dragged-in files are checked from a copy, so use Check a file when you want Rescan and History to follow the original.</p>
+      </aside>
+    </div>
+  </section>
+
+  <!-- ======================================================= results -->
+  <section class="view" id="view-results" role="tabpanel" aria-labelledby="tab-results" hidden>
+    <div class="split">
+      <div class="list" id="res-list-wrap">
+        <div class="filters" role="group" aria-label="Show">
+          <button aria-pressed="true" data-f="all">All</button>
+          <button aria-pressed="false" data-f="needs work">Changes needed</button>
+          <button aria-pressed="false" data-f="needs review">Check manually</button>
+          <button aria-pressed="false" data-f="pass">Ready</button>
+        </div>
+        <ul id="res-list"></ul>
+      </div>
+      <div class="detail" id="res-detail"><p class="empty">Check a file to see its results here.</p></div>
+    </div>
+  </section>
+
+  <!-- ======================================================= history -->
+  <section class="view" id="view-history" role="tabpanel" aria-labelledby="tab-history" hidden>
+    <header class="row" style="justify-content:space-between">
+      <h2>History and progress</h2>
+      <button class="btn primary" id="export-record">Export compliance record</button>
+    </header>
+    <div id="hist-body"></div>
+  </section>
+
+  <!-- ======================================================= settings -->
+  <section class="view" id="view-settings" role="tabpanel" aria-labelledby="tab-settings" hidden>
+    <header><h2>Settings</h2></header>
+    <form class="settings" id="settings-form">
+      <div class="field">
+        <label class="chk"><input type="checkbox" id="s-links"> Check web links online during scans</label>
+        <p class="hint">Finds links that lead nowhere. Needs an internet connection and adds a few seconds per file.</p>
+      </div>
+      <div class="field">
+        <label class="chk"><input type="checkbox" id="s-colorblind"> Show color blindness previews of pictures and graphs</label>
+      </div>
+      <div class="field">
+        <label class="chk"><input type="checkbox" id="s-21"> Hide WCAG 2.2 and best practice items, show only what WCAG 2.1 AA requires</label>
+      </div>
+      <div class="field">
+        <label class="title" for="s-folder">Save reports in</label>
+        <div class="row"><input type="text" id="s-folder" style="flex:1"><button class="btn" type="button" id="s-browse">Browse</button></div>
+        <p class="hint">Folder scans write a summary spreadsheet and one report per file here. Your course folders are never written to.</p>
+      </div>
+      <div class="row"><button class="btn primary" type="submit">Save settings</button></div>
+      <p class="muted small" id="s-version"></p>
+    </form>
+  </section>
+</main>
+
+<div class="toast" id="toast" role="status" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>
