@@ -22,6 +22,8 @@ DEFAULT_SETTINGS = {
     "include_subfolders": True,
     "report_folder": str(Path.home() / "Documents" / "ADA Checker Reports"),
     "show_21_only": False,
+    "ai_review": False,
+    "ai_model": "sonnet",
 }
 
 
@@ -43,6 +45,9 @@ class Store:
                 PRIMARY KEY(file_key, fingerprint, kind));
             CREATE TABLE IF NOT EXISTS videos(video_id TEXT PRIMARY KEY, checked_at TEXT, status TEXT, result TEXT);
             CREATE TABLE IF NOT EXISTS settings(k TEXT PRIMARY KEY, v TEXT);
+            CREATE TABLE IF NOT EXISTS ai_reviews(
+                file_key TEXT, fingerprint TEXT, sha TEXT, verdict TEXT, note TEXT, suggestion TEXT,
+                model TEXT, created_at TEXT, PRIMARY KEY(file_key, fingerprint));
             """)
             self.db.commit()
 
@@ -131,3 +136,30 @@ class Store:
             q = "SELECT * FROM marks" + (" WHERE kind=?" if kind else "") + " ORDER BY created_at DESC"
             rows = self.db.execute(q, (kind,) if kind else ()).fetchall()
         return [dict(r) for r in rows]
+
+    # ------------------------------------------------------------- AI reviews
+    def ai_reviews(self, file_key) -> dict:
+        with self.lock:
+            rows = self.db.execute("SELECT * FROM ai_reviews WHERE file_key=?", (file_key,)).fetchall()
+        return {r["fingerprint"]: dict(r) for r in rows}
+
+    def save_ai_review(self, file_key, fingerprint, sha, verdict, note, suggestion, model, title, prefix):
+        """Records the AI verdict. A pass also marks the item reviewed, with a note saying the AI did it."""
+        now = datetime.now().isoformat(timespec="seconds")
+        with self.lock:
+            self.db.execute("REPLACE INTO ai_reviews(file_key,fingerprint,sha,verdict,note,suggestion,model,created_at) VALUES(?,?,?,?,?,?,?,?)",
+                            (file_key, fingerprint, sha, verdict, note, suggestion, model, now))
+            if verdict == "pass":
+                self.db.execute("REPLACE INTO marks(file_key,fingerprint,kind,note,title,created_at) VALUES(?,?,?,?,?,?)",
+                                (file_key, fingerprint, "reviewed", prefix + note, title, now))
+            self.db.commit()
+
+    def forget_stale_ai(self, file_key, sha, prefix):
+        """When a file changes, its AI reviews no longer apply. Remove them and any review the AI marked."""
+        with self.lock:
+            rows = self.db.execute("SELECT fingerprint FROM ai_reviews WHERE file_key=? AND sha<>?", (file_key, sha)).fetchall()
+            for r in rows:
+                self.db.execute("DELETE FROM marks WHERE file_key=? AND fingerprint=? AND kind='reviewed' AND note LIKE ?",
+                                (file_key, r["fingerprint"], prefix + "%"))
+            self.db.execute("DELETE FROM ai_reviews WHERE file_key=? AND sha<>?", (file_key, sha))
+            self.db.commit()
