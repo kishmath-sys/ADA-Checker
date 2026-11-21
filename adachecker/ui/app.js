@@ -59,10 +59,10 @@ tabs.forEach((t, i) => {
 });
 
 // ------------------------------------------------------------------ settings state
-let SETTINGS = {}, HAS_DIALOGS = true;
-async function loadSettingsState() {
-  const s = await api("/api/settings");
-  SETTINGS = s.settings; HAS_DIALOGS = s.dialogs;
+let SETTINGS = {}, HAS_DIALOGS = true, AI = { found: false };
+async function loadSettingsState(fresh) {
+  const s = await api("/api/settings" + (fresh ? "?fresh=1" : ""));
+  SETTINGS = s.settings; HAS_DIALOGS = s.dialogs; AI = s.ai || { found: false };
   $("#subfolders").checked = SETTINGS.include_subfolders !== false;
   $("#pathbox").hidden = HAS_DIALOGS;
   return s;
@@ -132,7 +132,7 @@ function watchJob(kind) {
     const pct = j.total ? Math.round((j.done / j.total) * 100) : 0;
     $("#prog-bar").firstElementChild.style.width = pct + "%";
     $("#prog-bar").setAttribute("aria-valuenow", pct);
-    $("#prog-title").textContent = j.running ? `Checking: ${j.done} of ${j.total || "?"}` : "Finished";
+    $("#prog-title").textContent = !j.running ? "Finished" : j.phase === "ai" ? `AI review: ${j.done} of ${j.total || "?"} files` : `Checking: ${j.done} of ${j.total || "?"}`;
     $("#prog-current").textContent = j.current || "";
     $("#prog-log").replaceChildren(...(j.log || []).map((l) => h("li", {}, l)));
     if (!j.running) {
@@ -157,7 +157,10 @@ function finishScan(j) {
   results.forEach((r) => c[r.status]++);
   const kids = [h("h2", {}, `Checked ${plural(results.length, "file")}`),
     h("p", {}, `${c["needs work"]} need changes, ${c["needs review"]} need a manual check, ${c.pass} ready` + (c.error ? `, ${c.error} could not be checked.` : "."))];
+  const t = j.ai_totals;
+  if (t) kids.push(h("p", {}, `AI review cleared ${plural(t.pass, "manual item")}, found ${t.fix} that need a change and left ${t.unsure} for you.` + (t.errors ? ` ${plural(t.errors, "file")} had a problem; see the log.` : "")));
   const row = h("div", { class: "row", style: "margin-top:10px" }, h("button", { class: "btn primary", onclick: () => { showTab("tab-results"); } }, "See results"));
+  if (AI.found && c["needs review"] && !t) row.append(h("button", { class: "btn", onclick: () => aiReview() }, "AI review the manual checks"));
   if (j.summary) {
     row.append(h("button", { class: "btn", onclick: () => api("/api/open", { path: j.summary.spreadsheet }) }, "Open summary spreadsheet"),
       h("button", { class: "btn", onclick: () => api("/api/open", { path: j.summary.folder }) }, "Open reports folder"));
@@ -165,8 +168,19 @@ function finishScan(j) {
   kids.push(row);
   d.replaceChildren(...kids);
   d.hidden = false;
+  if (REOPEN) { const id = REOPEN; REOPEN = null; openResult(id); showTab("tab-results"); return; }
   if (results.length === 1) { openResult(results[0].id); showTab("tab-results"); }
   else if (results.length) openResult(results[0].id);
+}
+
+let REOPEN = null;
+async function aiReview(id) {
+  const r = await api("/api/ai_review", id ? { id } : {});
+  REOPEN = id || null;
+  if (r.error) return toast(r.error, 8000);
+  $("#done").hidden = true;
+  showTab("tab-check");
+  watchJob("files");
 }
 
 // ------------------------------------------------------------------ results list
@@ -216,6 +230,8 @@ function renderDetail(box) {
   const buttons = h("div", { class: "row" });
   if (!childPath) {
     if (!isVideo) buttons.append(h("button", { class: "btn", onclick: () => rescan(data.scan.id) }, "Rescan"));
+    const openManual = r.issues.some((i) => i.group === "manual" && !ignored.has(i.fingerprint) && !reviewed.has(i.fingerprint) && !((data.ai || {})[r.path] || {})[i.fingerprint]);
+    if (!isVideo && AI.found && openManual && r.kind !== "zip") buttons.append(h("button", { class: "btn", onclick: () => aiReview(data.scan.id) }, "AI review"));
     buttons.append(h("button", { class: "btn", onclick: async () => { const s = await api("/api/save_report", { id: data.scan.id, video: !!isVideo }); toast(s.error || "Report saved and opened."); } }, "Save report"));
     if (isVideo) buttons.append(h("button", { class: "btn", onclick: () => api("/api/open", { path: r.path }) }, "Open on YouTube"));
     else if (!String(data.scan.file_key).startsWith("Dropped file:")) {
@@ -312,11 +328,18 @@ function issueCard(i, r, done, box) {
     places.length ? placeList(places.slice(0, 6)) : null,
     places.length > 6 ? h("details", { class: "more" }, h("summary", {}, `Show ${places.length - 6} more`), placeList(places.slice(6))) : null,
     i.fix ? h("div", { class: "fix" }, h("b", {}, "How to fix: "), i.fix) : null);
+  const ai = ((CURRENT.data.ai || {})[r.path] || {})[i.fingerprint];
+  if (ai) {
+    const head = { pass: "AI review: looks fine.", fix: "AI review: needs a change.", unsure: "AI review: could not decide, check it yourself." }[ai.verdict] || "AI review.";
+    card.append(h("div", { class: `ai ai-${ai.verdict}` }, h("b", {}, head + " "), ai.note,
+      ai.suggestion ? h("div", { class: "ai-sugg" }, h("span", { class: "muted small" }, "Suggested:"), h("p", {}, ai.suggestion),
+        h("button", { class: "btn link", onclick: async () => { try { await navigator.clipboard.writeText(ai.suggestion); toast("Copied."); } catch { toast("Could not copy."); } } }, "Copy")) : null));
+  }
   const actions = h("div", { class: "actions" });
   if (i.group === "manual" || i.group === "export") {
     const id = "rv-" + i.fingerprint;
     actions.append(h("label", { class: "chk", for: id }, h("input", { type: "checkbox", id, checked: done || null, onchange: (e) => mark(r, i, "reviewed", e.target.checked, box) }),
-      i.group === "export" ? "Done" : "Reviewed"));
+      i.group === "export" ? "Done" : done && ai && ai.verdict === "pass" ? "Reviewed by AI" : "Reviewed"));
   }
   if (i.group !== "export") {
     actions.append(h("button", { class: "btn link", onclick: () => {
@@ -395,15 +418,26 @@ async function loadSettings() {
   $("#s-colorblind").checked = !!SETTINGS.colorblind;
   $("#s-21").checked = !!SETTINGS.show_21_only;
   $("#s-folder").value = SETTINGS.report_folder || "";
+  $("#s-ai").checked = !!SETTINGS.ai_review;
+  $("#s-ai-model").value = SETTINGS.ai_model || "sonnet";
+  showAiStatus();
   $("#s-version").textContent = `Checker version ${s.version}. History is kept in ${s.data}.`;
   $("#s-browse").hidden = !HAS_DIALOGS;
 }
+function showAiStatus() {
+  const el = $("#s-ai-status");
+  el.textContent = AI.found ? `${AI.message} It uses your Claude subscription, not an API key.`
+    : `${AI.message || "Claude Code was not found."} To set it up, open PowerShell and run: irm https://claude.ai/install.ps1 | iex   Then run claude once and sign in with your Claude account. Then press Check again.`;
+  el.className = "hint" + (AI.found ? "" : " warn");
+}
+$("#s-ai-check").onclick = async () => { $("#s-ai-status").textContent = "Looking for Claude Code…"; await loadSettingsState(true); showAiStatus(); };
 $("#s-browse").onclick = async () => { const p = await pick("report_folder"); if (p.length) $("#s-folder").value = p[0]; };
 $("#settings-form").onsubmit = async (e) => {
   e.preventDefault();
   await api("/api/settings", { settings: {
     check_links: $("#s-links").checked, colorblind: $("#s-colorblind").checked,
-    show_21_only: $("#s-21").checked, report_folder: $("#s-folder").value.trim(), include_subfolders: $("#subfolders").checked } });
+    show_21_only: $("#s-21").checked, report_folder: $("#s-folder").value.trim(), include_subfolders: $("#subfolders").checked,
+    ai_review: $("#s-ai").checked, ai_model: $("#s-ai-model").value } });
   await loadSettingsState();
   toast("Settings saved.");
 };

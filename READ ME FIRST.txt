@@ -35,6 +35,31 @@ Each result has three lists:
 The checkbox "Show only what WCAG 2.1 AA requires" hides WCAG 2.2 and best practice items.
 
 
+AI REVIEW OF MANUAL CHECKS (optional)
+
+ADA Checker can ask Claude to judge the "Check manually" items for you: it compares each
+picture with its alt text, reads the math, checks reading order and color use, and tests
+web pages for zoom and keyboard use in a real browser. It uses Claude Code, which comes
+with a Claude Pro or Max subscription, so there is no API key and no separate bill.
+Claude Code runs on your computer and the file contents are sent to Claude to review.
+
+Set up once:
+1. Open PowerShell and run:   irm https://claude.ai/install.ps1 | iex
+2. Close PowerShell, open it again, type   claude   and press Enter.
+   Sign in with your Claude account when asked, then type /exit.
+3. In ADA Checker open Settings, press Check again, tick "Use AI review", and Save.
+
+After that every check ends with an AI review. Items Claude is sure about are ticked
+"Reviewed by AI" and logged that way in the compliance record. Items it thinks need a
+change show its note and suggested fix, often new alt text you can copy. Anything it
+cannot decide, and every video caption check, stays for you. You can also press
+"AI review" on any result. AI can be wrong, so spot check its work and untick anything
+you disagree with. When a file changes, its AI reviews are cleared and redone.
+
+Usage comes out of the monthly Agent SDK credit that is part of your Claude plan, not your
+chat limits. Sonnet (the default) uses less of it than Opus.
+
+
 HISTORY AND RECORDS
 
 The History tab shows how many files are ready now, and this month compared to last month.
@@ -50,16 +75,18 @@ checking libraries.
 
 PRIVACY
 
-Everything runs on your computer. The internet is used only to check that web links work
-(you can turn this off in Settings) and by Update.bat.
+Everything runs on your computer. The internet is used to check that web links work
+(you can turn this off in Settings), by Update.bat, and, only if you turn on AI review,
+to send file contents to Claude for review.
 
 
 WHAT IT CANNOT DO
 
-No automated tool can confirm everything. A person still needs to judge whether alt text is
-accurate, whether math reads correctly in a PDF, whether reading order makes sense, and
-whether videos show important things that are not spoken. Those items are listed under
-Check manually so nothing is missed.
+No automated tool can confirm everything. Without AI review, a person needs to judge whether
+alt text is accurate, whether math reads correctly in a PDF, whether reading order makes
+sense, and whether videos show important things that are not spoken. Those items are listed
+under Check manually so nothing is missed. AI review settles many of them, but video
+captions always need a person, and AI verdicts should be spot checked.
 
 
 UNINSTALL

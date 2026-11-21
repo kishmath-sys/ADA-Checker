@@ -19,7 +19,9 @@ from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, unquote
 
-from . import engine, report
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+from . import engine, report, ai_review
 from .common import CHECKER_VERSION, short
 from .store import Store, data_dir
 
@@ -59,6 +61,7 @@ class App:
         self.batch = []                   # scan ids of the latest batch
         self.batch_info = {}
         self.upload_dir = Path(tempfile.mkdtemp(prefix="adachecker_uploads_"))
+        self._ai_status = (0, None)
 
     # ------------------------------------------------------------- helpers
     def marks_for(self, key):
@@ -77,6 +80,16 @@ class App:
         return {"id": scan_id, "name": s["name"], "kind": s["kind"], "file_key": s["file_key"], "status": st,
                 "counts": c, "scanned_at": s["scanned_at"], "error": r.get("error", ""),
                 "children": len(r.get("children", []))}
+
+    def ai_for(self, key):
+        return self.store.ai_reviews(key)
+
+    def ai_status(self, fresh=False):
+        t, st = self._ai_status
+        if fresh or st is None or time.time() - t > 120:
+            st = ai_review.claude_status()
+            self._ai_status = (time.time(), st)
+        return st
 
     # ------------------------------------------------------------- scanning
     def gather(self, paths, folder, subfolders):
@@ -161,6 +174,7 @@ class App:
                 res.path = key
                 rd = res.to_dict()
                 self._rekey_children(rd, key)
+                self.store.forget_stale_ai(key, sha, ai_review.AI_PREFIX)
                 st = self.status_for(rd)
                 c = engine.counts_of(rd, self.marks_for)
                 sid = self.store.add_scan(key, name, rd["kind"], sha, CHECKER_VERSION, st, c, batch_id, rd)
@@ -168,6 +182,8 @@ class App:
                 self.job["done"] = n
             self.batch = ids
             self.batch_info = {"folder": folder, "batch": batch_id}
+            if settings.get("ai_review") and ids and not self.cancel.is_set():
+                self._ai_pass(ids, settings)
             summary = None
             if folder and ids and not self.cancel.is_set():
                 summary = self.write_folder_reports(ids, folder)
@@ -175,6 +191,103 @@ class App:
         except Exception as e:  # noqa
             traceback.print_exc()
             self.job.update({"running": False, "error": short(str(e), 300)})
+
+    def start_ai_review(self, ids):
+        with self.lock:
+            if self.job.get("running"):
+                return {"error": "A check is already running."}
+            st = self.ai_status(fresh=True)
+            if not st.get("found"):
+                return {"error": st.get("message", "Claude Code is not installed.") + " See Settings for how to set it up."}
+            self.cancel.clear()
+            self.job = {"running": True, "kind": "files", "phase": "ai", "done": 0, "total": 0, "current": "Getting ready…",
+                        "log": [], "summary": None, "started": time.time()}
+        threading.Thread(target=self._ai_worker, args=(list(ids),), daemon=True).start()
+        return {"ok": True}
+
+    def _ai_worker(self, ids):
+        try:
+            self._ai_pass(ids, self.store.settings())
+            summary = None
+            folder = self.batch_info.get("folder")
+            if folder and ids and set(ids) <= set(self.batch) and not self.cancel.is_set():
+                summary = self.write_folder_reports(self.batch, folder)
+            self.job.update({"running": False, "current": "", "summary": summary, "finished": time.time()})
+        except Exception as e:  # noqa
+            traceback.print_exc()
+            self.job.update({"running": False, "error": short(str(e), 300)})
+
+    def _ai_pass(self, ids, settings):
+        """Ask Claude Code to judge the open "Check manually" items of each scan."""
+        st = self.ai_status(fresh=True)
+        if not st.get("found"):
+            self.job["log"].append("AI review skipped: " + st.get("message", "Claude Code not found."))
+            return
+        model = settings.get("ai_model") or "sonnet"
+        tasks = []
+        for sid in ids:
+            s = self.store.scan(sid)
+            if not s:
+                continue
+            r = json.loads(s["result"])
+            if r.get("error") or r.get("kind") == "zip":
+                continue
+            path = s["file_key"]
+            if not os.path.isfile(path):
+                continue
+            try:
+                if sha256_of(path) != s["sha"]:
+                    self.job["log"].append(f"{s['name']}: changed since it was checked, rescan before AI review")
+                    continue
+            except OSError:
+                continue
+            ignored, reviewed = self.marks_for(path)
+            done = self.ai_for(path)
+            todo = [i for i in r.get("issues", []) if ai_review.reviewable(i) and i["fingerprint"] not in ignored
+                    and i["fingerprint"] not in reviewed and i["fingerprint"] not in done]
+            if todo:
+                tasks.append((sid, s, r, path, todo))
+        self.job.update({"phase": "ai", "done": 0, "total": len(tasks), "current": "AI review"})
+        if not tasks:
+            self.job["log"].append("AI review: nothing left for the AI to check")
+            return
+        totals = {"pass": 0, "fix": 0, "unsure": 0, "cost": 0.0, "errors": 0}
+        lock = threading.Lock()
+
+        def one(t):
+            sid, s, r, path, todo = t
+            if self.cancel.is_set():
+                return t, None
+            self.job["current"] = f"AI review: {s['name']}"
+            return t, ai_review.review_file(r["kind"], path, s["name"], todo, model, st.get("path"))
+
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            futs = [pool.submit(one, t) for t in tasks]
+            for f in as_completed(futs):
+                (sid, s, r, path, todo), out = f.result()
+                with lock:
+                    self.job["done"] += 1
+                if out is None:
+                    continue
+                titles = {i["fingerprint"]: i["title"] for i in todo}
+                for fp, v in out["items"].items():
+                    self.store.save_ai_review(path, fp, s["sha"], v["verdict"], v["note"], v["suggestion"], model,
+                                              f"{s['name']}: {titles.get(fp, '')}", ai_review.AI_PREFIX)
+                    totals[v["verdict"]] += 1
+                totals["cost"] += out.get("cost") or 0
+                if out["error"]:
+                    totals["errors"] += 1
+                    self.job["log"].append(f"{s['name']}: AI review problem: {out['error']}")
+                else:
+                    n_pass = sum(1 for v in out["items"].values() if v["verdict"] == "pass")
+                    self.job["log"].append(f"{s['name']}: AI cleared {n_pass} of {len(todo)} item(s)")
+                self.store.update_status(sid, self.status_for(r), engine.counts_of(r, self.marks_for))
+                if out["error"] and any(k in out["error"].lower() for k in ("not logged in", "/login", "authentication", "log in")):
+                    self.job["log"].append("Claude Code is not signed in. Open PowerShell, run claude, sign in with your Claude account, then try again.")
+                    self.cancel.set()
+        self.cancel.clear()
+        self.job["ai_totals"] = totals
+        self.job["log"].append(f"AI review finished: {totals['pass']} cleared, {totals['fix']} to fix, {totals['unsure']} left for you")
 
     def _rekey_children(self, rd, key):
         for c in rd.get("children", []):
@@ -200,15 +313,19 @@ class App:
                 k += 1
             used.add(stem.lower())
             rp = out / "Reports" / f"{stem}.html"
-            rp.write_text(report.report_html(r, st, self.marks_for, self.status_for, s["scanned_at"].replace("T", " ")), encoding="utf-8")
+            rp.write_text(report.report_html(r, st, self.marks_for, self.status_for, s["scanned_at"].replace("T", " "), self.ai_for), encoding="utf-8")
             try:
                 rel_folder = os.path.relpath(os.path.dirname(s["file_key"]), folder)
             except ValueError:
                 rel_folder = os.path.dirname(s["file_key"])
             c = engine.counts_of(r, self.marks_for)
             kinds = {"word": "Word", "pdf": "PDF", "html": "Web page", "powerpoint": "PowerPoint", "excel": "Excel", "zip": "Zip"}
+            ai = self.ai_for(s["file_key"])
+            _, rv = self.marks_for(s["file_key"])
             rows.append({"name": s["name"], "folder": "" if rel_folder == "." else rel_folder, "kind": kinds.get(r["kind"], r["kind"]), "status": st,
                          "change": c["change"], "manual": c["manual"], "export": c["export"],
+                         "ai": sum(1 for fp, v in ai.items() if v["verdict"] == "pass" and fp in rv),
+                         "ai_fix": sum(1 for fp, v in ai.items() if v["verdict"] == "fix" and fp not in rv),
                          "top": report.top_issues(r, self.marks_for), "report": f"Reports/{stem}.html"})
         xlsx = out / "Accessibility summary.xlsx"
         report.write_summary_xlsx(xlsx, rows, folder)
@@ -328,13 +445,13 @@ def make_handler(app: App):
                 r = json.loads(s["result"])
                 return {"scan": {k: s[k] for k in ("id", "name", "kind", "file_key", "scanned_at")},
                         "result": r, "status": app.status_for(r), "counts": engine.counts_of(r, app.marks_for),
-                        "marks": _marks_tree(app, r)}
+                        "marks": _marks_tree(app, r), "ai": _ai_tree(app, r)}
             if path == "/api/history":
                 return {"latest": [dict(r, status=r["status"]) for r in app.store.latest_per_file()[:500]],
                         "progress": app.progress_stats(), "ignored": app.store.all_marks("ignored")[:300]}
             if path == "/api/settings":
                 return {"settings": app.store.settings(), "version": CHECKER_VERSION, "data": str(data_dir()),
-                        "dialogs": app.dialogs is not None}
+                        "dialogs": app.dialogs is not None, "ai": app.ai_status(fresh=q.get("fresh") == "1")}
             return {"error": "unknown"}
 
         def route_post(self, path, b):
@@ -353,6 +470,9 @@ def make_handler(app: App):
                 if not os.path.isfile(p):
                     return {"error": "The original file is no longer at this location. If you dragged it in, drag the updated file in again."}
                 return app.start_scan([{"path": p, "name": s["name"], "key": p}], None, True, True)
+            if path == "/api/ai_review":
+                ids = [int(i) for i in (b.get("ids") or ([b["id"]] if b.get("id") else app.batch))]
+                return app.start_ai_review(ids)
             if path == "/api/cancel":
                 app.cancel.set()
                 return {"ok": True}
@@ -372,7 +492,7 @@ def make_handler(app: App):
                 base = Path(app.store.settings().get("report_folder"))
                 base.mkdir(parents=True, exist_ok=True)
                 out = base / f"{report.safe_filename(Path(r['name']).name)} report {datetime.now().strftime('%Y-%m-%d %H%M')}.html"
-                out.write_text(report.report_html(r, app.status_for(r), app.marks_for, app.status_for, when.replace("T", " ")), encoding="utf-8")
+                out.write_text(report.report_html(r, app.status_for(r), app.marks_for, app.status_for, when.replace("T", " "), app.ai_for), encoding="utf-8")
                 open_path(str(out))
                 return {"path": str(out)}
             if path == "/api/open":
@@ -408,6 +528,19 @@ def _marks_tree(app, r):
     def walk(x):
         ig, rv = app.marks_for(x["path"])
         out[x["path"]] = {"ignored": sorted(ig), "reviewed": sorted(rv)}
+        for c in x.get("children", []):
+            walk(c)
+    walk(r)
+    return out
+
+
+def _ai_tree(app, r):
+    out = {}
+
+    def walk(x):
+        a = app.ai_for(x["path"])
+        if a:
+            out[x["path"]] = {fp: {"verdict": v["verdict"], "note": v["note"], "suggestion": v["suggestion"], "at": v["created_at"]} for fp, v in a.items()}
         for c in x.get("children", []):
             walk(c)
     walk(r)

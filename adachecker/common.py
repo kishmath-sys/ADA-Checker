@@ -5,7 +5,7 @@ import hashlib
 import re
 from dataclasses import dataclass, field, asdict
 
-CHECKER_VERSION = "1.1.0"
+CHECKER_VERSION = "1.2.0"
 
 # Issue groups shown in the report
 CHANGE = "change"      # something to fix in the file

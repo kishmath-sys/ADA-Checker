@@ -27,6 +27,7 @@ h1{font-size:1.6rem;margin:.2em 0}h2{font-size:1.25rem;margin:1.6em 0 .3em;borde
 .item.done{opacity:.65}.tag{font-size:.8rem;color:var(--muted);margin-right:.6em}
 .fix{background:var(--soft);border-left:4px solid var(--blue);padding:6px 10px;margin:8px 0 0}
 ul.places{margin:.4em 0 0 1.1em;padding:0}ul.places li{margin:.1em 0}
+.ai{margin:8px 0 0;padding:6px 10px;border-left:4px solid #6639ba;background:#fbf7ff}.ai pre{white-space:pre-wrap;font:inherit;margin:.3em 0 0}
 .passed li{color:var(--green)}.grid{display:flex;gap:10px;flex-wrap:wrap}.grid figure{margin:0;text-align:center;font-size:.85rem}
 .grid img{max-width:220px;border:1px solid var(--line)}table{border-collapse:collapse}td,th{padding:4px 10px;border-bottom:1px solid var(--line);text-align:left}
 @media print{body{padding:0}.item{break-inside:avoid}}
@@ -37,25 +38,39 @@ def e(s) -> str:
     return html.escape(str(s if s is not None else ""))
 
 
-def _issue_html(i, marks):
+AI_VERDICT = {"pass": "AI review: looks fine", "fix": "AI review: needs a change", "unsure": "AI review: could not decide, check it yourself"}
+
+
+def _ai_html(a):
+    if not a:
+        return ""
+    return (f'<div class="ai"><strong>{e(AI_VERDICT.get(a["verdict"], "AI review"))}.</strong> {e(a.get("note", ""))}'
+            + (f'<pre>Suggested: {e(a["suggestion"])}</pre>' if a.get("suggestion") else "") + "</div>")
+
+
+def _issue_html(i, marks, ai=None):
     ignored, reviewed = marks
     if i["fingerprint"] in ignored:
         return ""
     done = i["fingerprint"] in reviewed
+    a = (ai or {}).get(i["fingerprint"])
+    by_ai = done and a and a.get("verdict") == "pass"
     places = "".join(f"<li>{e(p)}</li>" for p in i.get("items", [])[:60])
     tags = " ".join(f'<span class="tag">{e(w)}</span>' for w in i.get("wcag_labels", []))
     std = f'<span class="tag">{e(i.get("standard", ""))}</span>' if i.get("standard") else ""
-    return (f'<div class="item{" done" if done else ""}"><h3>{"✔ Reviewed: " if done else ""}{e(i["title"])}</h3>'
+    return (f'<div class="item{" done" if done else ""}"><h3>{("✔ Reviewed by AI: " if by_ai else "✔ Reviewed: ") if done else ""}{e(i["title"])}</h3>'
             f'<div>{std}{tags}<span class="tag">Priority: {e(i.get("severity", ""))}</span></div>'
             + (f'<p>{e(i["detail"])}</p>' if i.get("detail") else "")
             + (f'<p class="meta">Where: {e(i["location"])}</p>' if i.get("location") else "")
             + (f'<ul class="places">{places}</ul>' if places else "")
             + (f'<p class="fix"><strong>How to fix:</strong> {e(i["fix"])}</p>' if i.get("fix") else "")
+            + _ai_html(a)
             + "</div>")
 
 
-def _result_body(r, marks_for, status_for, level=2):
+def _result_body(r, marks_for, status_for, level=2, ai_for=None):
     marks = marks_for(r["path"])
+    ai = ai_for(r["path"]) if ai_for else {}
     h = f"h{level}"
     out = []
     if r.get("error"):
@@ -66,7 +81,7 @@ def _result_body(r, marks_for, status_for, level=2):
             continue
         title, intro = GROUP_TITLE[group]
         out.append(f"<{h}>{e(title)} ({len(items)})</{h}>" + (f"<p class='meta'>{e(intro)}</p>" if intro else ""))
-        out.extend(_issue_html(i, marks) for i in items)
+        out.extend(_issue_html(i, marks, ai) for i in items)
     if r.get("passed"):
         out.append(f"<{h}>Passed</{h}><ul class='passed'>" + "".join(f"<li>✔ {e(p)}</li>" for p in r["passed"]) + "</ul>")
     if r.get("previews"):
@@ -80,11 +95,11 @@ def _result_body(r, marks_for, status_for, level=2):
     for c in r.get("children", []):
         st = status_for(c)
         out.append(f"<h2>{e(c['name'])} <span class='pill s-{st.replace(' ', '-')}'>{e(STATUS_LABEL.get(st, st))}</span></h2>")
-        out.append(_result_body(c, marks_for, status_for, level=3))
+        out.append(_result_body(c, marks_for, status_for, level=3, ai_for=ai_for))
     return "".join(out)
 
 
-def report_html(r: dict, status: str, marks_for, status_for, scanned_at: str = "") -> str:
+def report_html(r: dict, status: str, marks_for, status_for, scanned_at: str = "", ai_for=None) -> str:
     when = scanned_at or datetime.now().strftime("%Y-%m-%d %H:%M")
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Accessibility report: {e(r['name'])}</title><style>{CSS}</style></head><body><main>
@@ -92,8 +107,8 @@ def report_html(r: dict, status: str, marks_for, status_for, scanned_at: str = "
 <h1>{e(r['name'])}</h1>
 <p><span class="pill s-{status.replace(' ', '-')}">{e(STATUS_LABEL.get(status, status))}</span></p>
 <p class="meta">Checked {e(when)} against WCAG 2.1 AA (the ADA Title II standard) and WCAG 2.2 AA. Checker version {CHECKER_VERSION}.<br>File: {e(r['path'])}</p>
-{_result_body(r, marks_for, status_for)}
-<p class="meta" style="margin-top:2em">Automated checks find many problems but not all. Items under “Check manually” need a person to confirm.</p>
+{_result_body(r, marks_for, status_for, ai_for=ai_for)}
+<p class="meta" style="margin-top:2em">Automated checks find many problems but not all. Items under “Check manually” need a person to confirm, unless they are marked as reviewed by AI. AI reviews are made by Claude and can be wrong; uncheck any you disagree with in the app.</p>
 </main></body></html>"""
 
 
@@ -123,26 +138,26 @@ def write_summary_xlsx(path: Path, rows: list[dict], folder_label: str):
     wb = Workbook()
     ws = wb.active
     ws.title = "Summary"
-    headers = ["File", "Folder", "Type", "Status", "Changes needed", "Manual checks", "After export", "Main issues", "Report"]
+    headers = ["File", "Folder", "Type", "Status", "Changes needed", "Manual checks", "Cleared by AI", "AI says fix", "After export", "Main issues", "Report"]
     ws.append(headers)
     fills = {"Changes needed": "FFEBE9", "Check manually": "FFF8C5", "Ready": "DAFBE1", "Could not check": "EAEEF2"}
     order = {"needs work": 0, "error": 1, "needs review": 2, "pass": 3}
     for r in sorted(rows, key=lambda x: (order.get(x["status"], 9), -x["change"], x["name"].lower())):
         label = STATUS_LABEL.get(r["status"], r["status"])
-        ws.append([r["name"], r["folder"], r["kind"], label, r["change"], r["manual"], r["export"], r["top"], "Open report" if r["report"] else ""])
+        ws.append([r["name"], r["folder"], r["kind"], label, r["change"], r["manual"], r.get("ai", 0), r.get("ai_fix", 0), r["export"], r["top"], "Open report" if r["report"] else ""])
         row = ws.max_row
         ws.cell(row, 4).fill = PatternFill("solid", fgColor=fills.get(label, "FFFFFF"))
         if r["report"]:
-            c = ws.cell(row, 9)
+            c = ws.cell(row, 11)
             c.hyperlink = r["report"]
             c.font = Font(color="0A4FA6", underline="single")
-    widths = [42, 30, 12, 17, 10, 10, 10, 70, 14]
+    widths = [42, 30, 12, 17, 10, 10, 10, 10, 10, 70, 14]
     for i, w in enumerate(widths, 1):
         ws.column_dimensions[chr(64 + i)].width = w
     for row in ws.iter_rows(min_row=2):
-        row[7].alignment = Alignment(wrap_text=True, vertical="top")
+        row[9].alignment = Alignment(wrap_text=True, vertical="top")
     if ws.max_row > 1:
-        t = Table(displayName="Summary", ref=f"A1:I{ws.max_row}")
+        t = Table(displayName="Summary", ref=f"A1:K{ws.max_row}")
         t.tableStyleInfo = TableStyleInfo(name="TableStyleMedium2", showRowStripes=True)
         ws.add_table(t)
     ws.freeze_panes = "A2"
@@ -153,6 +168,11 @@ def write_summary_xlsx(path: Path, rows: list[dict], folder_label: str):
     info.append(["Files", len(rows)])
     for st in ("needs work", "needs review", "pass", "error"):
         info.append([STATUS_LABEL[st], sum(1 for r in rows if r["status"] == st)])
+    n_ai = sum(r.get("ai", 0) for r in rows)
+    if n_ai or any(r.get("ai_fix") for r in rows):
+        info.append(["Manual items cleared by AI", n_ai])
+        info.append(["Manual items AI says to fix", sum(r.get("ai_fix", 0) for r in rows)])
+        info.append(["About AI review", "Made by Claude through Claude Code. AI reviews can be wrong. Spot check them and uncheck any you disagree with in the app."])
     info.column_dimensions["A"].width = 22
     info.column_dimensions["B"].width = 80
     wb.properties.title = f"Accessibility summary for {folder_label}"
@@ -186,8 +206,11 @@ def write_compliance_xlsx(path: Path, store):
           [[r["scanned_at"].replace("T", " "), r["name"], r["file_key"], STATUS_LABEL.get(r["status"], r["status"]), r["n_change"], r["n_manual"]] for r in hist],
           [18, 40, 60, 16, 10, 10])
     rev = store.all_marks("reviewed")
-    sheet(wb.create_sheet(), "Reviewed items", ["Date reviewed", "File", "Item", "Note"],
-          [[m["created_at"].replace("T", " "), m["file_key"], m["title"], m["note"]] for m in rev], [18, 60, 60, 40])
+    from .ai_review import AI_PREFIX
+    sheet(wb.create_sheet(), "Reviewed items", ["Date reviewed", "File", "Item", "Reviewed by", "Note"],
+          [[m["created_at"].replace("T", " "), m["file_key"], m["title"],
+            "AI (Claude)" if (m["note"] or "").startswith(AI_PREFIX) else "You",
+            (m["note"] or "")[len(AI_PREFIX):] if (m["note"] or "").startswith(AI_PREFIX) else m["note"]] for m in rev], [18, 60, 60, 14, 50])
     ign = store.all_marks("ignored")
     sheet(wb.create_sheet(), "Accepted as is", ["Date", "File", "Item", "Reason"],
           [[m["created_at"].replace("T", " "), m["file_key"], m["title"], m["note"]] for m in ign], [18, 60, 60, 40])

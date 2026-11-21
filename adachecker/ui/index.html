@@ -116,6 +116,14 @@
         <label class="chk"><input type="checkbox" id="s-21"> Hide WCAG 2.2 and best practice items, show only what WCAG 2.1 AA requires</label>
       </div>
       <div class="field">
+        <label class="chk"><input type="checkbox" id="s-ai"> Use AI review for items marked Check manually</label>
+        <p class="hint">After each check, Claude Code looks at the pictures, alt text, math and reading order and decides each manual item. Items it is sure about are marked reviewed by AI and logged that way in your compliance record. The rest stay for you, with its notes. Video captions are always left for you. File contents are sent to Claude to do this.</p>
+        <div class="row"><label for="s-ai-model">Model</label>
+          <select id="s-ai-model"><option value="sonnet">Sonnet (faster, uses less of your plan)</option><option value="opus">Opus (most careful)</option></select>
+          <button class="btn" type="button" id="s-ai-check">Check again</button></div>
+        <p class="hint" id="s-ai-status" role="status"></p>
+      </div>
+      <div class="field">
         <label class="title" for="s-folder">Save reports in</label>
         <div class="row"><input type="text" id="s-folder" style="flex:1"><button class="btn" type="button" id="s-browse">Browse</button></div>
         <p class="hint">Folder scans write a summary spreadsheet and one report per file here. Your course folders are never written to.</p>

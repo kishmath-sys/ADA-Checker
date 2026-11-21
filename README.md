@@ -2,7 +2,7 @@
 
 A Windows app that checks instructional files for accessibility against WCAG 2.1 AA, the standard required by the ADA Title II rule, plus WCAG 2.2 AA and PDF/UA.
 
-Give it a file or a folder. It lists what to change in each file, where the problem is and how to fix it, and separately lists what a person needs to check by hand. It only reads files and never changes them. Everything runs on your own computer.
+Give it a file or a folder. It lists what to change in each file, where the problem is and how to fix it, and separately lists what a person needs to check by hand. It only reads files and never changes them. Everything runs on your own computer, unless you turn on the optional AI review.
 
 ## What it checks
 
@@ -26,6 +26,7 @@ It also checks web links for broken pages and shows color blindness previews of 
 - History tab with progress this month compared to last month
 - Exportable compliance record (Excel) of every file, status, review and reason
 - Option to show only what WCAG 2.1 AA requires
+- Optional AI review of manual checks with Claude Code (see below)
 
 ## Install
 
@@ -36,9 +37,17 @@ Requires Windows 10 or 11. Works on Intel, AMD and ARM based PCs.
 
 Run `Update.bat` about once a month to update the checking rules. See `READ ME FIRST.txt` for full instructions.
 
+## AI review (optional)
+
+Turn on **Use AI review** in Settings to have Claude judge the Check manually items: alt text against the actual picture, math as a screen reader gets it, reading order, color use, contrast on backgrounds, and zoom and keyboard tests run in a real browser for web pages. It runs through [Claude Code](https://code.claude.com) on your computer, signed in with a Claude Pro or Max subscription, so no API key is needed. Any `ANTHROPIC_API_KEY` variable is removed when Claude Code is started, so it cannot bill an API account by accident.
+
+For each file, the checker copies the evidence (text in reading order, each picture with its full alt text, PDF page images, browser screenshots and test results) to a temporary folder and starts Claude Code there with only its Read tool allowed. Claude returns pass, fix or unsure for every item. Pass items are marked "Reviewed by AI" and recorded that way in the compliance record. Fix and unsure items stay open with Claude's note and suggested fix. Video caption checks are never sent. When a file changes, its AI reviews are cleared.
+
+Setup: in PowerShell run `irm https://claude.ai/install.ps1 | iex`, then run `claude` once and sign in.
+
 ## Limits
 
-Automated checks cannot confirm everything. A person still needs to judge whether alt text is accurate, whether math reads correctly in a PDF, whether the reading order makes sense, and whether video captions match what is said. Those items appear under Check manually. This tool does not certify compliance.
+Automated checks cannot confirm everything. A person still needs to judge whether alt text is accurate, whether math reads correctly in a PDF, whether the reading order makes sense, and whether video captions match what is said. Those items appear under Check manually. AI review can settle many of them but can be wrong, so spot check it. This tool does not certify compliance.
 
 ## Built with
 
